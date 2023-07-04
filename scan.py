@@ -2,6 +2,7 @@ import re
 import os
 import sys
 from collections import defaultdict
+from typing import Dict
 import pandas as pd
 
 pattern_extract_robust_unit_test = r'\d+/\d+ Test\s+#\d+: (?P<unit_test>.*) \.*\**Failed'
@@ -149,7 +150,7 @@ def parse_segmentation_fault_for_mac3(trace_backs):
     categories.add("Segmentation fault")
     return categories
 
-def parse_file(filename):
+def parse_file(filename) -> Dict[str, str]:
     with open(filename, mode='r') as f:
         lines = f.readlines()
         lines = [pattern_filter_time_signature.sub("", log) for log in lines]
@@ -204,24 +205,81 @@ def parse_mac_and_py3(path):
 
     mac_error_category = parse_file(mac_path)
     py3_error_category = parse_file(py3_path)
+    error_categories = [py3_error_category, mac_error_category]
 
     error_category = defaultdict(set)
-    for d in (mac_error_category, py3_error_category):
+    for d in error_categories:
         for unit_test, categories in d.items():
             error_category[unit_test].update(categories)
     df = pd.DataFrame.from_dict(error_category, orient='index')
-    df.to_csv("{}_test2category.csv".format(path))
+    df = df.rename(lambda x: '错误{}'.format(x), axis='columns')
+    df.sort_values(by=['错误0'], inplace=True)
+    df.to_csv(os.path.join(path, "test2category.csv"))
 
     error_to_unittest = defaultdict(set)
     for unit_test, categories in error_category.items():
         for category in categories:
             error_to_unittest[category].add(unit_test)
     df_e2u = pd.DataFrame.from_dict(error_to_unittest, orient='index')
-    df_e2u.to_csv("{}_category2test.csv".format(path))
+    df_e2u = df_e2u.rename(lambda x: '{}'.format(x), axis='columns')
+    df_e2u['相关单测个数'] = df_e2u.count(axis=1)
+    cols = df_e2u.columns.tolist()
+    cols = cols[-1:] + cols[:-1]
+    df_e2u = df_e2u[cols]
+    df_e2u.sort_index(ascending=False, inplace=True)
+    df.to_csv(os.path.join(path, "category2test.csv"))
     
-    with pd.ExcelWriter('{}.xlsx'.format(path)) as writer:  
+    excel_path = os.path.join(path, 'summary.xlsx')
+    with pd.ExcelWriter(excel_path) as writer:
         df.to_excel(writer, sheet_name='test2category')
         df_e2u.to_excel(writer, sheet_name='category2test')
 
+def compare_two_error_category(err_cat1, err_cat2) -> None:
+    intersection = set(err_cat1.keys()).intersection(err_cat2.keys())
+    resolved = set(err_cat1.keys()).difference(err_cat2.keys())
+    occured = set(err_cat2.keys()).difference(err_cat1.keys())
+    print(f'following {len(resolved)} unittests resolved...')
+    for unit in resolved:
+        print(unit)
+    print(f'following {len(occured)} unittests failed recently...')
+    for unit in occured:
+        print(unit)
+    
+    updated = set()
+    for unit in intersection:
+        if (err_cat1[unit] == err_cat2[unit]):
+            continue
+        updated.add(unit)
+    print(f'following {len(updated)} unittests\' cause updated...')
+    for unit in updated:
+        print(''.join(['>' for i in range(20)]))
+        print(err_cat1[unit])
+        print(''.join(['=' for i in range(20)]))
+        print(err_cat2[unit])
+        print(''.join(['<' for i in range(20)]))
+
+def compare_two_file(old_file, new_file):
+    err_cat1 = parse_file(old_file)
+    err_cat2 = parse_file(new_file)
+
+    compare_two_error_category(err_cat1, err_cat2)
+
+
+def compare_two_directory(dir1, dir2):
+    d1 = [parse_file(os.path.join(dir1, "py3.log")), parse_file(os.path.join(dir1, "mac.log"))]
+    err_cat1 = defaultdict(set)
+    for d in d1:
+        for unit_test, categories in d.items():
+            err_cat1[unit_test].update(categories)
+
+    d2 = [parse_file(os.path.join(dir2, "py3.log")), parse_file(os.path.join(dir2, "mac.log"))]
+    err_cat2 = defaultdict(set)
+    for d in d2:
+        for unit_test, categories in d.items():
+            err_cat2[unit_test].update(categories)
+    compare_two_error_category(err_cat1, err_cat2)
+
 if __name__ == '__main__': 
     parse_mac_and_py3(sys.argv[1])
+    # compare_two_file("log/0629/py3.log", "log/0704/py3.log")
+    # compare_two_directory("log/0629", "log/0704")
