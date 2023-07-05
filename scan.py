@@ -4,6 +4,11 @@ import sys
 from collections import defaultdict
 from typing import Dict
 import pandas as pd
+from vika import Vika
+
+vika = Vika("usk1AZuHPwIdgDEOgbtf4re")
+vika.set_api_base("https://ku.baidu-int.com/")
+datasheet = vika.datasheet("dstcvk6ZRbLC21zjod", field_key="id")
 
 pattern_extract_robust_unit_test = r'\d+/\d+ Test\s+#\d+: (?P<unit_test>.*) \.*\**Failed'
 pattern_extract_robust_unit_test = re.compile(pattern_extract_robust_unit_test)
@@ -241,6 +246,12 @@ def compare_two_error_category(err_cat1, err_cat2) -> None:
     print(f'following {len(resolved)} unittests resolved...')
     for unit in resolved:
         print(unit)
+        row = datasheet.records.get(flde5JlDRhiwf=unit)
+        if '当前状态' in row.json() and row.json()['当前状态'] == '已修复(手动)':
+            continue
+        row.update({
+            "fld7doy9Ar4kv": "已修复(自动)"
+        })
     print(f'following {len(occured)} unittests failed recently...')
     for unit in occured:
         print(unit)
@@ -257,6 +268,24 @@ def compare_two_error_category(err_cat1, err_cat2) -> None:
         print(''.join(['=' for i in range(20)]))
         print(err_cat2[unit])
         print(''.join(['<' for i in range(20)]))
+        row = datasheet.records.get(flde5JlDRhiwf=unit)
+        error_keys = [
+            'fldonkQ7zYr1n',
+            'fldQwzAEdoevl',
+            'fldhXNjM8iLyX',
+            'fldbaHXc53etz',
+            'fld6qtkyq8p8p',
+            'fldmWyKVLr04J',
+            'fldZcBoTd3UYt',
+            'fldJCanFZd5BX',
+            'fldwn4T7DWb7H',
+        ]
+        records = {
+            "fld7doy9Ar4kv": "待分析",
+        }
+        for ek, cat in zip(error_keys, err_cat2[unit]):
+            records[ek] = cat
+        row.update(records)
 
 def compare_two_file(old_file, new_file):
     err_cat1 = parse_file(old_file)
@@ -281,5 +310,4 @@ def compare_two_directory(dir1, dir2):
 
 if __name__ == '__main__': 
     parse_mac_and_py3(sys.argv[1])
-    # compare_two_file("log/0629/py3.log", "log/0704/py3.log")
-    # compare_two_directory("log/0629", "log/0704")
+    compare_two_directory("log/0629", "log/0705")
