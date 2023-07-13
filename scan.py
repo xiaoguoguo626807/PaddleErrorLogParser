@@ -2,9 +2,11 @@ import re
 import os
 import sys
 from collections import defaultdict
+import json
 from typing import Dict
 import pandas as pd
 from vika import Vika
+from vika.exceptions import RecordDoesNotExist
 
 vika = Vika("usk1AZuHPwIdgDEOgbtf4re")
 vika.set_api_base("https://ku.baidu-int.com/")
@@ -246,12 +248,6 @@ def compare_two_error_category(err_cat1, err_cat2) -> None:
     print(f'following {len(resolved)} unittests resolved...')
     for unit in resolved:
         print(unit)
-        row = datasheet.records.get(flde5JlDRhiwf=unit)
-        if '当前状态' in row.json() and row.json()['当前状态'] == '已修复(手动)':
-            continue
-        row.update({
-            "fld7doy9Ar4kv": "已修复(自动)"
-        })
     print(f'following {len(occured)} unittests failed recently...')
     for unit in occured:
         print(unit)
@@ -268,24 +264,6 @@ def compare_two_error_category(err_cat1, err_cat2) -> None:
         print(''.join(['=' for i in range(20)]))
         print(err_cat2[unit])
         print(''.join(['<' for i in range(20)]))
-        row = datasheet.records.get(flde5JlDRhiwf=unit)
-        error_keys = [
-            'fldonkQ7zYr1n',
-            'fldQwzAEdoevl',
-            'fldhXNjM8iLyX',
-            'fldbaHXc53etz',
-            'fld6qtkyq8p8p',
-            'fldmWyKVLr04J',
-            'fldZcBoTd3UYt',
-            'fldJCanFZd5BX',
-            'fldwn4T7DWb7H',
-        ]
-        records = {
-            "fld7doy9Ar4kv": "待分析",
-        }
-        for ek, cat in zip(error_keys, err_cat2[unit]):
-            records[ek] = cat
-        row.update(records)
 
 def compare_two_file(old_file, new_file):
     err_cat1 = parse_file(old_file)
@@ -308,6 +286,104 @@ def compare_two_directory(dir1, dir2):
             err_cat2[unit_test].update(categories)
     compare_two_error_category(err_cat1, err_cat2)
 
+def get_new_ir_white_list() -> set:
+    with open('new_ir_white_list', 'r') as f:
+        lines = f.readlines()
+        lines = [x.strip() for x in lines]
+        lines = filter(lambda x: len(x.strip()) > 0, lines)
+        return set(lines)
+
+def get_current_list(datasheet, fm: Dict[str, str]) -> set:
+    records = datasheet.records.all(fields=[fm[x] for x in ["单测名称"]])
+    cl = set()
+    for record in records:
+        cl.add(record.json()[fm['单测名称']])
+    return cl
+
+def get_fields_mapping(datasheet) -> Dict[str, str]:
+    fields = datasheet.fields.all()
+    fm = {}
+    for field in fields:
+        j = field.json()
+        j = json.loads(j)
+        fm[j['name']] = j['id'] 
+    return fm
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+def update_from_err_cat(err_cat, all_list):
+    pass
+
+def update_new_records(cl:set, wl:set, fm):
+    diff = wl.difference(cl)
+    all_records = []
+    for unit in diff:
+        try:
+            is_existed = datasheet.records.get(单测名称=unit)
+        except RecordDoesNotExist as e:
+            print(f'not found {unit}')
+            r = {
+                fm["单测名称"]: unit,
+                fm["当前状态"]: "已修复(自动)"
+            }
+            all_records.append(r)
+    for chunk in chunks(all_records, 10):
+        records = datasheet.records.bulk_create(chunk)
+
+def update_white_list():
+    wl = get_new_ir_white_list()
+    fm = get_fields_mapping(datasheet)
+    cl = get_current_list(datasheet, fm)
+    update_new_records(cl, wl, fm)
+
+def update_routine(path, update=False):
+    fm = get_fields_mapping(datasheet)
+    cl = get_current_list(datasheet, fm)
+    err_cnt = parse_file(path)
+
+    freshly_failed = set(err_cnt.keys()).difference(cl)
+    print(f'following {len(freshly_failed)} unittests freshly failed...')
+    for unit in freshly_failed:
+        print(unit)
+
+    resolved = set()
+    failed = set()
+    for unit in cl:
+        row = datasheet.records.get(单测名称=unit)
+        r = row.json()
+        state = "undefined" if "当前状态" not in r else r["当前状态"]
+        if unit not in err_cnt and state is not "已修复(自动)":
+            resolved.add(unit)
+            if update:
+                row.update({fm["当前状态"]: "已修复(自动)"})
+            continue
+        if unit in err_cnt and state is "已修复(自动)":
+            failed.add(unit)
+            if update:
+                row.update({fm["当前状态"]: "待分析"})
+            continue
+        elif unit in err_cnt:
+            if update:
+                record = {}
+                error_keys = [ fm[f"错误{i}"] for i in range(9)]
+                for ek, cat in zip(error_keys, err_cnt[unit]):
+                    record[ek] = cat
+                row.update(record)
+            continue
+    print(f'following {len(resolved)} unittests resolved...')
+    for unit in resolved:
+        print(unit)
+    print(f'following {len(failed)} unittests failed recently...')
+    for unit in failed:
+        print(unit)
+
+
+
 if __name__ == '__main__': 
-    parse_mac_and_py3(sys.argv[1])
-    compare_two_directory("log/0629", "log/0705")
+    # parse_mac_and_py3(sys.argv[1])
+    # compare_two_directory("log/0629", "log/0710")
+    # compare_two_file("log/0629/py3.log", "log/0706/py3.log")
+    update_routine("log/0712/py3.log", update=True)
