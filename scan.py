@@ -8,9 +8,10 @@ import pandas as pd
 from vika import Vika
 from vika.exceptions import RecordDoesNotExist
 
-vika = Vika("usk1AZuHPwIdgDEOgbtf4re")
+configs = json.load(open('config.json', 'r'))
+vika = Vika(configs['API_TOKEN'])
 vika.set_api_base("https://ku.baidu-int.com/")
-datasheet = vika.datasheet("dstcvk6ZRbLC21zjod", field_key="id")
+datasheet = vika.datasheet(configs["datasheet"], field_key="id")
 
 pattern_extract_robust_unit_test = r'\d+/\d+ Test\s+#\d+: (?P<unit_test>.*) \.*\**Failed'
 pattern_extract_robust_unit_test = re.compile(pattern_extract_robust_unit_test)
@@ -157,7 +158,7 @@ def parse_segmentation_fault_for_mac3(trace_backs):
     categories.add("Segmentation fault")
     return categories
 
-def parse_file(filename) -> Dict[str, str]:
+def parse_file(filename, discard: bool = True) -> Dict[str, str]:
     with open(filename, mode='r') as f:
         lines = f.readlines()
         lines = [pattern_filter_time_signature.sub("", log) for log in lines]
@@ -199,6 +200,8 @@ def parse_file(filename) -> Dict[str, str]:
             if len(categories) > 0:
                 unit_tests_category[new_unit_test] = categories
                 continue
+            if not discard:
+                unit_tests_category[new_unit_test] = trace_backs
         
         if len(set(unit_tests)) > len(set(unit_tests_category)):
             print(filename)
@@ -314,8 +317,14 @@ def chunks(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
-def update_from_err_cat(err_cat, all_list):
-    pass
+def get_current_succ() -> set:
+    fm = get_fields_mapping(datasheet)
+    records = datasheet.records.all()
+    cl = set()
+    for record in records:
+        if fm['当前状态'] in record.json() and record.json()[fm['当前状态']] == "已修复(自动)":
+            cl.add(record.json()[fm['单测名称']])
+    return cl
 
 def update_new_records(cl:set, wl:set, fm):
     diff = wl.difference(cl)
@@ -381,9 +390,32 @@ def update_routine(path, update=False):
         print(unit)
 
 
+def parse_ci_coverage(filename):
+    err_cat = parse_file(filename)
+    with open('final_op_list', 'r') as f:
+        lines = f.readlines()
+        while_list = set([l.strip() for l in lines]) 
+    error_category = defaultdict(set)
+    for unit_test, categories in err_cat.items():
+        if unit_test not in while_list:
+            continue
+        error_category[unit_test].update(categories)
+        print('---------[{} start]-----------'.format(unit_test))
+        indent = '    '
+        for cat in categories:
+            print(f'{indent}', cat)
+        print('---------[{} end]-----------'.format(unit_test))
+        [print('') for i in range(2)]
+    error_to_unittest = defaultdict(set)
+    for unit_test, categories in error_category.items():
+        for category in categories:
+            error_to_unittest[category].add(unit_test)
+    print(error_to_unittest)
 
 if __name__ == '__main__': 
     # parse_mac_and_py3(sys.argv[1])
     # compare_two_directory("log/0629", "log/0710")
     # compare_two_file("log/0629/py3.log", "log/0706/py3.log")
-    update_routine("log/0712/py3.log", update=True)
+    # update_routine("log/0803/py3.log", update=True)
+    # [print(x) for x in get_current_succ()]
+    parse_ci_coverage("log/0808/ci_coverage.log")
