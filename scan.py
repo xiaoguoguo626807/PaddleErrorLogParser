@@ -12,6 +12,7 @@ configs = json.load(open('config.json', 'r'))
 vika = Vika(configs['API_TOKEN'])
 vika.set_api_base("https://ku.baidu-int.com/")
 datasheet = vika.datasheet(configs["datasheet"], field_key="id")
+datasheet_orig  = vika.datasheet(configs["datasheet_orig"], field_key="id")
 
 pattern_extract_robust_unit_test = r'\d+/\d+ Test\s+#\d+: (?P<unit_test>.*) \.*\**Failed'
 pattern_extract_robust_unit_test = re.compile(pattern_extract_robust_unit_test)
@@ -211,11 +212,12 @@ def parse_file(filename, discard: bool = True) -> Dict[str, str]:
 
 def parse_mac_and_py3(path):
     mac_path = os.path.join(path, 'mac.log')
-    py3_path = os.path.join(path, 'py3.log')
+    # py3_path = os.path.join(path, 'py3.log')
 
     mac_error_category = parse_file(mac_path)
-    py3_error_category = parse_file(py3_path)
-    error_categories = [py3_error_category, mac_error_category]
+    # py3_error_category = parse_file(py3_path)
+    # error_categories = [py3_error_category, mac_error_category]
+    error_categories = [mac_error_category]
 
     error_category = defaultdict(set)
     for d in error_categories:
@@ -303,6 +305,7 @@ def get_current_list(datasheet, fm: Dict[str, str]) -> set:
         cl.add(record.json()[fm['单测名称']])
     return cl
 
+# filed name -> filed id
 def get_fields_mapping(datasheet) -> Dict[str, str]:
     fields = datasheet.fields.all()
     fm = {}
@@ -389,6 +392,65 @@ def update_routine(path, update=False):
     for unit in failed:
         print(unit)
 
+def add_all_item(filename):
+    import csv
+    import datetime
+    timestamp =  datetime.date.today()
+    
+    fm = get_fields_mapping(datasheet)
+    with open(filename, 'r') as file:
+        reader = csv.reader(file)
+        first_column = [row[0] for row in reader]
+    
+    all_records = []
+    for unit in first_column:
+        try:
+            is_existed = datasheet.records.get(单测名称=unit)
+        except RecordDoesNotExist as e:
+            print(f'prepare add {unit}')
+            r = {
+                fm["单测名称"]: unit,
+                fm["当前状态"]: "未测试",
+                fm["更新日期"]: timestamp
+            }
+            all_records.append(r)
+
+    for chunk in chunks(all_records, 10):
+        datasheet.records.bulk_create(chunk)
+        print("add ten items ....")
+    
+
+def update_no_need_item():
+    import datetime
+    timestamp =  datetime.date.today()
+    fm1 = get_fields_mapping(datasheet_orig)
+    cl1 = get_current_list(datasheet_orig, fm1)
+    
+    
+    fm2 = get_fields_mapping(datasheet)
+    all_records = []
+    for unit in cl1:
+        row = datasheet_orig.records.get(单测名称=unit)
+        r = row.json()
+        state = "undefined" if "当前状态" not in r else r["当前状态"]
+        if state in set(["已废弃" , "不需要修复" , "低优处理", "统一的专项处理"]):
+            try:
+                row2 = datasheet.records.get(单测名称=unit)
+                row2.update({fm2["当前状态"]: state})
+            except RecordDoesNotExist as e:
+                print(f'prepare add {unit}')
+                r = {
+                    fm2["单测名称"]: unit,
+                    fm2["当前状态"]: "未测试",
+                    fm2["更新日期"]: timestamp
+                }
+                all_records.append(r)
+
+    for chunk in chunks(all_records, 10):
+        datasheet.records.bulk_create(chunk)
+        print("add ten items ....")
+        
+    
 
 def parse_ci_coverage(filename):
     err_cat = parse_file(filename)
@@ -418,4 +480,6 @@ if __name__ == '__main__':
     # compare_two_file("log/0629/py3.log", "log/0706/py3.log")
     # update_routine("log/0803/py3.log", update=True)
     # [print(x) for x in get_current_succ()]
-    parse_ci_coverage("log/0808/ci_coverage.log")
+    # parse_ci_coverage("log/0808/ci_coverage.log")
+    # add_all_item(sys.argv[1])
+    update_no_need_item()
